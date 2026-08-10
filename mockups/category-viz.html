@@ -1,0 +1,214 @@
+<style>
+  :root {
+    --bg: #F1F4F0;
+    --card: #FFFFFF;
+    --fg: #14201A;
+    --muted-fg: #6E7A72;
+    --border: #DFE5DF;
+    --primary: #4F7D63;
+    --track: #DCE8DF;
+    --radius: 6px;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111612;
+      --card: #171E19;
+      --fg: #E4EAE5;
+      --muted-fg: #8A968F;
+      --border: #2A332D;
+      --primary: #6FA383;
+      --track: #1E2721;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111612; --card: #171E19; --fg: #E4EAE5; --muted-fg: #8A968F;
+    --border: #2A332D; --primary: #6FA383; --track: #1E2721; color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --bg: #F1F4F0; --card: #FFFFFF; --fg: #14201A; --muted-fg: #6E7A72;
+    --border: #DFE5DF; --primary: #4F7D63; --track: #DCE8DF; color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap { max-width: 420px; margin: 0 auto; padding: 20px 16px 48px; }
+  .num { font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, monospace; font-variant-numeric: tabular-nums; }
+
+  .page-head { margin-bottom: 20px; }
+  .page-head h1 { font-size: 20px; margin: 0 0 4px; font-weight: 700; text-wrap: balance; }
+  .page-head p { margin: 0; font-size: 13px; color: var(--muted-fg); }
+
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted-fg); margin: 0 0 12px; font-weight: 600;
+  }
+  .total-line { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; }
+  .total-line .k { font-size: 12px; color: var(--muted-fg); }
+  .total-line .v { font-size: 18px; font-weight: 700; }
+  .note { font-size: 12px; color: var(--muted-fg); margin: 14px 0 0; }
+
+  /* Bars */
+  .bar-row { margin-bottom: 12px; }
+  .bar-top { display: flex; align-items: center; gap: 8px; font-size: 14px; margin-bottom: 5px; }
+  .bar-top .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+  .bar-top .name { flex: 1; }
+  .bar-top .val { font-size: 13px; }
+  .bar-top .pct { width: 40px; text-align: right; font-size: 12px; color: var(--muted-fg); }
+  .bar-track { height: 6px; border-radius: 999px; background: var(--track); overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 999px; }
+
+  /* Donut */
+  .donut-wrap { display: flex; flex-direction: column; align-items: center; gap: 16px; }
+  .donut { position: relative; width: 180px; height: 180px; }
+  .donut svg { transform: rotate(-90deg); }
+  .donut .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+  .donut .center .k { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-fg); }
+  .donut .center .v { font-size: 20px; font-weight: 700; }
+  .legend { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+  .legend .item { display: flex; align-items: center; gap: 7px; font-size: 12px; }
+  .legend .dot { width: 9px; height: 9px; border-radius: 2px; flex: none; }
+  .legend .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .legend .pct { color: var(--muted-fg); }
+
+  /* Treemap */
+  .treemap { position: relative; width: 100%; height: 240px; }
+  .tile { position: absolute; border-radius: 4px; overflow: hidden; padding: 7px 8px; color: #fff; }
+  .tile .tn { font-size: 12px; font-weight: 600; line-height: 1.2; }
+  .tile .tv { font-size: 11px; opacity: 0.9; }
+</style>
+
+<div class="wrap">
+  <div class="page-head">
+    <h1>Gastos por categoria — 3 formas</h1>
+    <p>Mockup para avaliar. Mesmos dados, tema do app. Julho, gasto total R$&nbsp;3.630.</p>
+  </div>
+
+  <div class="card">
+    <p class="label">Opção A · Barras (atual, refinada)</p>
+    <div class="total-line"><span class="k">Total gasto</span><span class="v num">R$ 3.630</span></div>
+    <div id="bars"></div>
+    <p class="note">Leitura direta, ordena por valor, mostra número exato. Fraca pra “peso relativo” num relance quando há muitas categorias.</p>
+  </div>
+
+  <div class="card">
+    <p class="label">Opção B · Donut</p>
+    <div class="donut-wrap">
+      <div class="donut">
+        <svg width="180" height="180" viewBox="0 0 180 180" id="donut"></svg>
+        <div class="center"><span class="k">Total</span><span class="v num">R$ 3.630</span></div>
+      </div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <p class="note">Peso relativo imediato e total no centro. Fatias pequenas ficam ilegíveis; precisa da legenda ao lado.</p>
+  </div>
+
+  <div class="card">
+    <p class="label">Opção C · Treemap</p>
+    <div class="total-line"><span class="k">Total gasto</span><span class="v num">R$ 3.630</span></div>
+    <div class="treemap" id="treemap"></div>
+    <p class="note">Área = valor. Escala bem com muitas categorias e usa o espaço todo. Comparar fatias vizinhas de tamanho parecido é mais difícil.</p>
+  </div>
+</div>
+
+<script>
+  const data = [
+    { name: "Moradia", value: 1500, color: "#4F7D63" },
+    { name: "Alimentação", value: 850, color: "#C08A2E" },
+    { name: "Transporte", value: 420, color: "#5B7DB1" },
+    { name: "Lazer", value: 300, color: "#3F9AA8" },
+    { name: "Compras", value: 260, color: "#8A6BB1" },
+    { name: "Saúde", value: 180, color: "#A84A2C" },
+    { name: "Outros", value: 120, color: "#6E7A72" },
+  ].sort((a, b) => b.value - a.value);
+  const total = data.reduce((s, d) => s + d.value, 0);
+  const brl = (n) => "R$ " + n.toLocaleString("pt-BR");
+  const pct = (v) => Math.round((v / total) * 100) + "%";
+
+  // Bars
+  document.getElementById("bars").innerHTML = data.map((d) => `
+    <div class="bar-row">
+      <div class="bar-top">
+        <span class="dot" style="background:${d.color}"></span>
+        <span class="name">${d.name}</span>
+        <span class="val num">${brl(d.value)}</span>
+        <span class="pct num">${pct(d.value)}</span>
+      </div>
+      <div class="bar-track"><div class="bar-fill" style="width:${(d.value / total) * 100}%;background:${d.color}"></div></div>
+    </div>`).join("");
+
+  // Donut
+  const R = 70, CX = 90, CY = 90, C = 2 * Math.PI * R;
+  let offset = 0;
+  const svg = document.getElementById("donut");
+  svg.innerHTML = data.map((d) => {
+    const len = (d.value / total) * C;
+    const seg = `<circle cx="${CX}" cy="${CY}" r="${R}" fill="none" stroke="${d.color}"
+      stroke-width="28" stroke-dasharray="${len} ${C - len}" stroke-dashoffset="${-offset}" />`;
+    offset += len;
+    return seg;
+  }).join("");
+  document.getElementById("legend").innerHTML = data.map((d) => `
+    <div class="item">
+      <span class="dot" style="background:${d.color}"></span>
+      <span class="name">${d.name}</span>
+      <span class="pct num">${pct(d.value)}</span>
+    </div>`).join("");
+
+  // Treemap (squarified)
+  function worst(row, side, sum) {
+    const mx = Math.max(...row), mn = Math.min(...row);
+    return Math.max((side * side * mx) / (sum * sum), (sum * sum) / (side * side * mn));
+  }
+  function squarify(areas, x, y, w, h) {
+    const tiles = [];
+    let i = 0, X = x, Y = y, W = w, H = h;
+    while (i < areas.length) {
+      const side = Math.min(W, H);
+      let row = [], sum = 0, k = i;
+      while (k < areas.length) {
+        const na = row.concat(areas[k]), ns = sum + areas[k];
+        if (row.length === 0 || worst(na, side, ns) <= worst(row, side, sum)) {
+          row = na; sum = ns; k++;
+        } else break;
+      }
+      if (W >= H) {
+        const colW = sum / H; let oy = Y;
+        for (const a of row) { const th = a / colW; tiles.push({ x: X, y: oy, w: colW, h: th }); oy += th; }
+        X += colW; W -= colW;
+      } else {
+        const rowH = sum / W; let ox = X;
+        for (const a of row) { const tw = a / rowH; tiles.push({ x: ox, y: Y, w: tw, h: rowH }); ox += tw; }
+        Y += rowH; H -= rowH;
+      }
+      i = k;
+    }
+    return tiles;
+  }
+  const tm = document.getElementById("treemap");
+  const TW = tm.clientWidth || 388, TH = 240;
+  const scale = (TW * TH) / total;
+  const areas = data.map((d) => d.value * scale);
+  const tiles = squarify(areas, 0, 0, TW, TH);
+  tm.innerHTML = tiles.map((t, idx) => {
+    const d = data[idx];
+    const big = t.w > 56 && t.h > 34;
+    return `<div class="tile" style="left:${t.x}px;top:${t.y}px;width:${t.w - 3}px;height:${t.h - 3}px;background:${d.color}">
+      ${big ? `<div class="tn">${d.name}</div><div class="tv num">${brl(d.value)}</div>` : ""}
+    </div>`;
+  }).join("");
+</script>
