@@ -4,10 +4,12 @@ import type { ReactNode } from "react";
 import { useFinance, currentMonth, type FinanceMode } from "@/hooks/useFinance";
 import { useCountUp } from "@/hooks/useCountUp";
 import { formatBRL } from "@/lib/format";
-import { BalanceChart } from "@/components/BalanceChart";
+import { MovementChart } from "@/components/MovementChart";
 import { StatCard } from "@/components/StatCard";
 import { CategorySection } from "@/components/CategorySection";
 import { TxList } from "@/components/TxList";
+import { listEntries } from "@/lib/entries";
+import { daysInMonth } from "@/lib/series";
 import { useAuth } from "@/hooks/useAuth";
 import type { FinanceMetrics } from "@/hooks/useFinance";
 
@@ -33,9 +35,14 @@ export function Home({
   const hero = useCountUp(heroTarget);
 
   if (!data || !user) return null;
-  const { metrics, balanceSeries } = data;
+  const { metrics } = data;
   const saldoPositive = metrics.saldoDoMes >= 0;
   const heroPositive = heroTarget >= 0;
+  const recentEntries = listEntries(user.id, {
+    start: `${month}-01`,
+    end: `${month}-${String(daysInMonth(month)).padStart(2, "0")}`,
+    limit: 10,
+  });
 
   return (
     <div className="space-y-16">
@@ -52,7 +59,7 @@ export function Home({
             {formatBRL(hero)}
           </p>
         </div>
-        <BalanceChart series={balanceSeries} />
+        <MovementChart userId={user.id} month={month} mode={mode} />
       </Section>
 
       {/* 2 — Métricas */}
@@ -104,7 +111,7 @@ export function Home({
 
       {/* 3 — Recentes */}
       <Section title="Recentes">
-        <TxList userId={user.id} month={month} />
+        <TxList entries={recentEntries} />
       </Section>
     </div>
   );

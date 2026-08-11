@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
-import logo from "../public/logo_buggcoin_dol.png";
+import logo from "../public/logo_buggcoin_transparente.png";
 
 // Buggcoin logo: beetle illustration + wordmark. Clicking it goes Home.
 const SIZES = {
@@ -21,7 +21,11 @@ export function Logo({
 }) {
   const s = SIZES[size];
   return (
-    <Link href={href} className="inline-flex items-center gap-2" aria-label="Buggcoin — início">
+    <Link
+      href={href}
+      className="inline-flex items-center gap-2"
+      aria-label="Buggcoin — início"
+    >
       <Image
         src={logo}
         alt=""

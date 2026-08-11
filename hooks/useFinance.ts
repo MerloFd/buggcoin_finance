@@ -7,10 +7,11 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
+import { countsInTotals } from "@/lib/entries";
+import { clampDay, daysInMonth as daysIn } from "@/lib/series";
 import {
   store,
   type Direction,
-  type Entry,
   type Recurring,
   type RecurringRealization,
   type RecurringType,
@@ -35,15 +36,6 @@ export interface CategoryTotal {
   ratio: number; // share of total expenses
 }
 
-// One day of the running-balance line. `balance` carries over from prior months
-// (starts from zero at first use). `projected` days are after today and use
-// still-previsto recurrings.
-export interface BalancePoint {
-  day: number;
-  balance: number;
-  projected: boolean;
-}
-
 export interface FinanceMetrics {
   gastosRealizadosDoMes: number;
   entradasDoMes: number;
@@ -63,27 +55,12 @@ export interface FinanceData {
   todayDay: number | null; // null in closed mode
   metrics: FinanceMetrics;
   monthRecurrings: MonthRecurring[];
-  balanceSeries: BalancePoint[];
   reload: () => void;
 }
 
 export function currentMonth(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-function daysIn(month: string): number {
-  const [y, m] = month.split("-").map(Number);
-  return new Date(y, m, 0).getDate();
-}
-
-function clampDay(day: number, month: string): number {
-  return Math.min(day, daysIn(month));
-}
-
-// dedup: only 'merged' and 'pending' leave the totals.
-function countsInTotals(e: Entry): boolean {
-  return e.dedupStatus !== "merged" && e.dedupStatus !== "pending";
 }
 
 function compute(userId: string, month: string, mode: FinanceMode): FinanceData {
@@ -198,49 +175,6 @@ function compute(userId: string, month: string, mode: FinanceMode): FinanceData 
     status: statusOf(r),
   }));
 
-  // --- Running balance series ---
-  const total = daysIn(month);
-  const monthStart = `${month}-01`;
-  const net = (e: Entry) =>
-    e.direction === "in" ? Math.abs(e.amount) : -Math.abs(e.amount);
-  const dayStr = (d: number) => `${month}-${String(d).padStart(2, "0")}`;
-
-  // Balance carried in from all prior months (zero at first use).
-  const carryIn = store
-    .getEntries(userId)
-    .filter(countsInTotals)
-    .filter((e) => e.date < monthStart)
-    .reduce((sum, e) => sum + net(e), 0);
-
-  // Realized portion runs to today (open) or to the whole month (closed).
-  const lastRealizedDay = mode === "open" ? (todayDay as number) : total;
-  const realizedUpTo = (d: number) =>
-    carryIn +
-    realized
-      .filter((e) => e.date <= dayStr(d))
-      .reduce((sum, e) => sum + net(e), 0);
-  const balanceAtToday = realizedUpTo(lastRealizedDay);
-
-  // Projection uses still-previsto recurrings on their (clamped) day.
-  const previstoRec = recurrings.filter((r) => statusOf(r) === "previsto");
-  const projectedUpTo = (d: number) =>
-    balanceAtToday +
-    previstoRec
-      .filter((r) => {
-        const rd = clampDay(r.dayOfMonth, month);
-        return rd > lastRealizedDay && rd <= d;
-      })
-      .reduce((sum, r) => sum + (dirOf(r) === "in" ? Math.abs(r.amount) : -Math.abs(r.amount)), 0);
-
-  const balanceSeries: BalancePoint[] = [];
-  for (let d = 1; d <= total; d++) {
-    balanceSeries.push(
-      d <= lastRealizedDay
-        ? { day: d, balance: realizedUpTo(d), projected: false }
-        : { day: d, balance: projectedUpTo(d), projected: true },
-    );
-  }
-
   return {
     month,
     mode,
@@ -258,7 +192,6 @@ function compute(userId: string, month: string, mode: FinanceMode): FinanceData 
       gastosPorCategoria,
     },
     monthRecurrings,
-    balanceSeries,
     reload: () => {},
   };
 }

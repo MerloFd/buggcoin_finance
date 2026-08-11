@@ -1,35 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatBRL, formatDateTime } from "@/lib/format";
 import { getCategoryStyle } from "@/lib/categories";
-import { store, type Entry } from "@/lib/store";
+import type { Entry } from "@/lib/store";
 
-const LIMIT = 10;
-
-export function TxList({ userId, month }: { userId: string; month: string }) {
-  const [entries, setEntries] = useState<Entry[]>([]);
-
-  useEffect(() => {
-    const list = store
-      .getEntries(userId, month)
-      // exclude entries netted out of the totals (pending/merged dedup)
-      .filter((e) => e.dedupStatus !== "merged" && e.dedupStatus !== "pending")
-      .sort((a, b) =>
-        (b.createdAt ?? b.date).localeCompare(a.createdAt ?? a.date),
-      )
-      .slice(0, LIMIT);
-    setEntries(list);
-  }, [userId, month]);
-
+// Presentational: callers filter/sort with `listEntries` from lib/entries.
+export function TxList({
+  entries,
+  emptyText = "Nenhum lançamento neste mês.",
+}: {
+  entries: Entry[];
+  emptyText?: string;
+}) {
   if (entries.length === 0) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Nenhum lançamento neste mês.
-      </p>
-    );
+    return <p className="text-sm text-muted-foreground">{emptyText}</p>;
   }
 
   return (
@@ -62,13 +48,16 @@ export function TxList({ userId, month }: { userId: string; month: string }) {
 
             <span className="min-w-0 flex-1">
               <span className="block truncate font-medium">{e.description}</span>
-              <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
                 <span
                   className="size-2 shrink-0 rounded-sm"
                   style={{ backgroundColor: cat.color }}
                   aria-hidden
                 />
-                {e.category ?? "Sem categoria"} · {formatDateTime(e.createdAt ?? e.date)}
+                <span className="truncate">
+                  {e.category ?? "Sem categoria"} ·{" "}
+                  {formatDateTime(e.createdAt ?? e.date)}
+                </span>
               </span>
             </span>
 
