@@ -2,11 +2,13 @@
 
 import type { ReactNode } from "react";
 import { useFinance, currentMonth, type FinanceMode } from "@/hooks/useFinance";
+import { useAsync } from "@/hooks/useAsync";
 import { useCountUp } from "@/hooks/useCountUp";
 import { formatBRL } from "@/lib/format";
 import { MovementChart } from "@/components/MovementChart";
 import { StatCard } from "@/components/StatCard";
 import { CategorySection } from "@/components/CategorySection";
+import { DebtSection } from "@/components/DebtSection";
 import { TxList } from "@/components/TxList";
 import { listEntries } from "@/lib/entries";
 import { daysInMonth } from "@/lib/series";
@@ -26,6 +28,7 @@ export function Home({
   const { user } = useAuth();
   const data = useFinance(month, mode);
   const closed = mode === "closed";
+  const userId = user?.id;
 
   const heroTarget = data
     ? closed
@@ -34,15 +37,24 @@ export function Home({
     : 0;
   const hero = useCountUp(heroTarget);
 
+  // Hooks must run before the early return below, so this loads with an
+  // optional userId rather than after the guard.
+  const { data: recentEntries } = useAsync(
+    async () =>
+      userId
+        ? listEntries(userId, {
+            start: `${month}-01`,
+            end: `${month}-${String(daysInMonth(month)).padStart(2, "0")}`,
+            limit: 10,
+          })
+        : [],
+    [userId, month],
+  );
+
   if (!data || !user) return null;
   const { metrics } = data;
   const saldoPositive = metrics.saldoDoMes >= 0;
   const heroPositive = heroTarget >= 0;
-  const recentEntries = listEntries(user.id, {
-    start: `${month}-01`,
-    end: `${month}-${String(daysInMonth(month)).padStart(2, "0")}`,
-    limit: 10,
-  });
 
   return (
     <div className="space-y-16">
@@ -109,9 +121,11 @@ export function Home({
         <CategorySection items={metrics.gastosPorCategoria} />
       </Section>
 
+      <DebtSection userId={user.id} month={month} />
+
       {/* 3 — Recentes */}
       <Section title="Recentes">
-        <TxList entries={recentEntries} />
+        <TxList entries={recentEntries ?? []} />
       </Section>
     </div>
   );

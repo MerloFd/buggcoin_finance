@@ -4,7 +4,7 @@
 // running balance on top. Answers "onde meu dinheiro foi" and "como estou de
 // dinheiro" in one element. Clicking a bucket opens its transactions.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 import {
   BarController,
@@ -26,6 +26,7 @@ import {
   ToggleGroupItem,
 } from "@/components/ui/toggle-group";
 import { PeriodDetailSheet } from "@/components/PeriodDetailSheet";
+import { useAsync } from "@/hooks/useAsync";
 import { formatBRL } from "@/lib/format";
 import { buildSeries, PERIODS, type Period, type SeriesBucket } from "@/lib/series";
 import type { FinanceMode } from "@/hooks/useFinance";
@@ -100,7 +101,7 @@ export function MovementChart({
     });
   }, [resolvedTheme]);
 
-  const series = useMemo(
+  const { data: loadedSeries } = useAsync(
     () =>
       buildSeries(userId, period, {
         month: closed || period === "month" ? month : undefined,
@@ -108,6 +109,9 @@ export function MovementChart({
       }),
     [userId, period, month, closed],
   );
+  // Empty until the first load resolves — the chart renders blank rather than
+  // flashing a wrong shape.
+  const series = loadedSeries ?? [];
 
   const data: ChartData<ComboType, number[], string> = {
     labels: series.map((b) => b.label),

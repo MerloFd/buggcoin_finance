@@ -8,7 +8,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { countsInTotals } from "@/lib/entries";
-import { clampDay, daysInMonth as daysIn } from "@/lib/series";
+import { countsInMonth, dayOfMonthOf } from "@/lib/recurring";
+import { daysInMonth as daysIn } from "@/lib/series";
 import {
   store,
   type Direction,
@@ -63,10 +64,21 @@ export function currentMonth(): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function compute(userId: string, month: string, mode: FinanceMode): FinanceData {
-  const entries = store.getEntries(userId, month);
-  const recurrings = store.getRecurrings(userId).filter((r) => r.active);
-  const types = store.getRecurringTypes(userId);
+async function compute(
+  userId: string,
+  month: string,
+  mode: FinanceMode,
+): Promise<FinanceData> {
+  const [entries, allRecurrings, types] = await Promise.all([
+    store.getEntries(userId, month),
+    store.getRecurrings(userId),
+    store.getRecurringTypes(userId),
+  ]);
+
+  // Only recurrings that are active AND running this month (started, not
+  // ended, and — when yearly — this is their month).
+  const recurrings = allRecurrings.filter((r) => countsInMonth(r, month));
+
   const typeDir = new Map<string, Direction>(
     types.map((t: RecurringType) => [t.id, t.direction]),
   );
@@ -75,10 +87,10 @@ function compute(userId: string, month: string, mode: FinanceMode): FinanceData 
   // Lazy month closing: a previsto recurring in a past month that never matched
   // becomes 'assumed' on read (no background job — the app is client-side).
   if (mode === "open" ? false : month < currentMonth()) {
-    const existing = store.getRealizations(userId, month);
+    const existing = await store.getRealizations(userId, month);
     for (const r of recurrings) {
       if (!existing.some((x) => x.recurringId === r.id)) {
-        store.saveRealization(userId, {
+        await store.saveRealization(userId, {
           recurringId: r.id,
           month,
           status: "assumed",
@@ -87,7 +99,7 @@ function compute(userId: string, month: string, mode: FinanceMode): FinanceData 
     }
   }
 
-  const realizations = store.getRealizations(userId, month);
+  const realizations = await store.getRealizations(userId, month);
   const realizationOf = new Map<string, RecurringRealization>(
     realizations.map((x) => [x.recurringId, x]),
   );
@@ -170,7 +182,7 @@ function compute(userId: string, month: string, mode: FinanceMode): FinanceData 
   const monthRecurrings: MonthRecurring[] = recurrings.map((r) => ({
     id: r.id,
     description: r.description,
-    day: clampDay(r.dayOfMonth, month),
+    day: dayOfMonthOf(r, month),
     direction: dirOf(r),
     status: statusOf(r),
   }));
@@ -197,11 +209,13 @@ function compute(userId: string, month: string, mode: FinanceMode): FinanceData 
 }
 
 // Lightweight realized totals for a month (list rows / mini chart).
-export function monthSummary(
+export async function monthSummary(
   userId: string,
   month: string,
-): { entradas: number; gastos: number; saldo: number } {
-  const realized = store.getEntries(userId, month).filter(countsInTotals);
+): Promise<{ entradas: number; gastos: number; saldo: number }> {
+  const realized = (await store.getEntries(userId, month)).filter(
+    countsInTotals,
+  );
   const gastos = realized
     .filter((e) => e.direction === "out")
     .reduce((sum, e) => sum + Math.abs(e.amount), 0);
@@ -212,8 +226,9 @@ export function monthSummary(
 }
 
 // Distinct months that have at least one entry, most recent first.
-export function monthsWithData(userId: string): string[] {
-  const months = new Set(store.getEntries(userId).map((e) => e.date.slice(0, 7)));
+export async function monthsWithData(userId: string): Promise<string[]> {
+  const entries = await store.getEntries(userId);
+  const months = new Set(entries.map((e) => e.date.slice(0, 7)));
   return [...months].sort((a, b) => b.localeCompare(a));
 }
 
@@ -224,16 +239,27 @@ export function useFinance(
   const { user } = useAuth();
   const userId = user?.id;
   const [data, setData] = useState<FinanceData | null>(null);
+  // Bumped by `reload` to re-run the effect without duplicating the fetch.
+  const [nonce, setNonce] = useState(0);
 
-  const load = useCallback(() => {
-    if (!userId) return;
-    setData(compute(userId, month, mode));
-  }, [userId, month, mode]);
+  const reload = useCallback(() => setNonce((n) => n + 1), []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    if (!userId) return;
+    // Guard against a slow response for a month the user already left.
+    let cancelled = false;
+    compute(userId, month, mode)
+      .then((next) => {
+        if (!cancelled) setData(next);
+      })
+      .catch((error: unknown) => {
+        console.error("useFinance: failed to load", error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, month, mode, nonce]);
 
   if (!data) return null;
-  return { ...data, reload: load };
+  return { ...data, reload };
 }

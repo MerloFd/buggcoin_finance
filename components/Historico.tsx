@@ -25,12 +25,22 @@ export function Historico() {
 
   useEffect(() => {
     if (!userId) return;
-    setRows(
-      monthsWithData(userId).map((month) => ({
-        month,
-        ...monthSummary(userId, month),
-      })),
-    );
+    let cancelled = false;
+    (async () => {
+      const months = await monthsWithData(userId);
+      const summaries = await Promise.all(
+        months.map(async (month) => ({
+          month,
+          ...(await monthSummary(userId, month)),
+        })),
+      );
+      if (!cancelled) setRows(summaries);
+    })().catch((error: unknown) => {
+      console.error("Historico: failed to load months", error);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [userId]);
 
   // Up to 6, chronological (oldest -> newest) for the chart.

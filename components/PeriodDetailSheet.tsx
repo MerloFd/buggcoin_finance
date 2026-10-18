@@ -3,7 +3,6 @@
 // Detail for one clicked bucket: what came in, what went out, and the
 // transactions behind it.
 
-import { useMemo } from "react";
 import {
   Sheet,
   SheetContent,
@@ -11,8 +10,11 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { TxList } from "@/components/TxList";
-import { formatBRL } from "@/lib/format";
+import { useAsync } from "@/hooks/useAsync";
+import { formatBRL, formatDay } from "@/lib/format";
 import { listEntries } from "@/lib/entries";
+import { installmentsDueBetween } from "@/lib/debts";
+import { store, type Direction, type Recurring } from "@/lib/store";
 import type { SeriesBucket } from "@/lib/series";
 
 export function PeriodDetailSheet({
@@ -24,13 +26,32 @@ export function PeriodDetailSheet({
   bucket: SeriesBucket | null;
   onClose: () => void;
 }) {
-  const entries = useMemo(
-    () =>
+  const { data: entries } = useAsync(
+    async () =>
       bucket
         ? listEntries(userId, { start: bucket.start, end: bucket.end })
         : [],
-    [userId, bucket],
+    [userId, bucket?.start, bucket?.end],
   );
+
+  const { data: dueDebts } = useAsync(async () => {
+    if (!bucket) return [];
+    const [recurrings, types] = await Promise.all([
+      store.getRecurrings(userId),
+      store.getRecurringTypes(userId),
+    ]);
+    const typeDir = new Map<string, Direction>(
+      types.map((t) => [t.id, t.direction]),
+    );
+    const directionOf = (r: Recurring): Direction =>
+      typeDir.get(r.typeId) ?? "out";
+    return installmentsDueBetween(
+      recurrings,
+      directionOf,
+      bucket.start,
+      bucket.end,
+    );
+  }, [userId, bucket?.start, bucket?.end]);
 
   if (!bucket) return null;
   const saldo = bucket.income - bucket.expense;
@@ -56,8 +77,49 @@ export function PeriodDetailSheet({
           />
         </div>
 
+        {dueDebts && dueDebts.length > 0 && (
+          <section className="space-y-2">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Dívidas vencendo neste período
+            </h3>
+            <ul className="space-y-2">
+              {dueDebts.map((debt) => (
+                <li
+                  key={`${debt.recurringId}-${debt.dueDate}`}
+                  className="rounded-lg border border-border bg-card p-3"
+                >
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="min-w-0 truncate font-medium">
+                      {debt.description}
+                      <span className="text-muted-foreground">
+                        {" "}
+                        · {debt.creditor}
+                      </span>
+                    </span>
+                    <span className="shrink-0 font-mono text-sm tabular-nums">
+                      {formatBRL(debt.amount)}
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    vence {formatDay(debt.dueDate)} · parcela {debt.index} de{" "}
+                    {debt.total}
+                    {debt.remainingAfter > 0 && (
+                      <>
+                        {" · restam "}
+                        <span className="font-mono tabular-nums">
+                          {formatBRL(debt.remainingAfter)}
+                        </span>
+                      </>
+                    )}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         <TxList
-          entries={entries}
+          entries={entries ?? []}
           emptyText="Nenhum lançamento neste período."
         />
       </SheetContent>

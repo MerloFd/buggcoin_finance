@@ -1,9 +1,9 @@
-// Single store instance. Swapping the implementation here is the ONLY change
-// needed when the real database (Supabase) replaces localStorage.
+// Single store instance. Components never talk to Supabase (or localStorage)
+// directly — everything goes through this contract.
 
-import { LocalStorageStore } from "./localStorageStore";
+import { SupabaseStore } from "./supabaseStore";
 import type { FinanceStore } from "./types";
 
-export const store: FinanceStore = new LocalStorageStore();
+export const store: FinanceStore = new SupabaseStore();
 
 export * from "./types";

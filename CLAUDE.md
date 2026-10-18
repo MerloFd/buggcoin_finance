@@ -1,3 +1,8 @@
+# Modo de resposta:
+
+- Sempre a cada passo da Spec me diga qual o proximo passo e porque estamos caminhando pra ele.
+- Me responda em PT-BR, e sou iniciante então me guie como um.
+
 # Regras invioláveis
 
 - spec.md é a fonte de verdade. Contradição com ela = parar e perguntar.
