@@ -904,6 +904,86 @@ um arquivo de migração (`ALTER TABLE` + `CREATE TABLE debts`), nunca editando
   Modelo de dados): assumir que o dinheiro cortado foi guardado contradiz
   "o app nunca decide sozinho".
 
+### 16. Blindar as rotas de API (bloqueia o deploy)
+
+> Decisão registrada em sessão, depois de auditar o código: `/api/connect-token`
+> e `/api/transactions` não verificam **ninguém**. Isso não tem relação com o
+> repositório ser público — o buraco existe igual com repo privado, porque quem
+> acha a URL do site acha as rotas. Tornar público só facilita descobrir que
+> elas existem.
+
+1. **`lib/supabase/server.ts`** — deixa de ser condicional. A Tarefa 13 adiou
+   esse arquivo até "existir server rendering de dado autenticado"; a condição
+   agora é outra e é mais forte: uma rota precisa saber **quem** está chamando.
+2. **`/api/connect-token`**: sem sessão válida, não emite token. Sem isso,
+   qualquer um gera token na **sua** conta Pluggy e queima as 5 conexões do
+   Meu Pluggy.
+3. **`/api/transactions`**: exige sessão **e** confere que o `itemId` pertence
+   ao usuário da sessão (consultar `bank_connections` pelo `user_id`). Hoje
+   qualquer `itemId` serve — o id é um uuid, mas isso é obscuridade, não
+   proteção.
+4. **Cadastro público desligado** no Supabase (Authentication → Sign Ups).
+   Defesa em profundidade: sem conta, não há sessão, e as duas rotas acima
+   ficam inalcançáveis.
+5. **`.env.example`** versionado — formato das variáveis, nenhum valor. É como
+   um projeto público documenta credenciais sem vazá-las.
+
+**Done:** chamada sem sessão nas duas rotas responde 401; `itemId` de outro
+usuário responde 403; `.env.example` no repositório e `.env*` fora dele.
+
+### 17. Sync automático do banco + fatura do cartão (depois da 16)
+
+> Motivação do usuário: *"preciso conectar meus bancos pra ele receber os dados"*
+> e ver *"a dívida de cartão atual dos meus 2 bancos"*. Hoje nenhuma das duas
+> acontece sozinha.
+
+1. **O fetch hoje roda uma vez só**, no `handleSuccess` do `ConnectBankSheet` —
+   no segundo em que o banco é conectado. Abrir o app amanhã não traz nada novo.
+   Varrer as conexões salvas e re-importar na abertura, mais um botão
+   "Atualizar agora". Seguro por construção: o `lib/bankImport.ts` é idempotente
+   por `bankTransactionId`.
+2. **Guardar "última sincronização" por conexão.** A Pluggy atualiza o item
+   ~1x/dia; sincronizar mais que isso não traz dado novo, só consumo.
+3. **Usar `data.accounts`.** A `/api/transactions` já devolve as contas com
+   `type: 'CREDIT'` e o saldo — que é a fatura atual — e o `importBankData`
+   **descarta**. É essa informação que faz os cartões aparecerem sem o usuário
+   digitar parcela nenhuma.
+4. **Tirar o `includeSandbox`** do `PluggyConnect` quando os testes acabarem.
+5. Webhook da Pluggy fica **fora de escopo**: exige URL pública, rota
+   autenticada e `SUPABASE_SERVICE_ROLE_KEY` no servidor. Ganho pequeno quando
+   a fonte atualiza 1x/dia.
+
+**Done:** abrir o app traz transações novas sem reconectar; a fatura atual de
+cada cartão aparece por banco; reabrir o app dez vezes não duplica nada.
+
+### 18. Modo visitante (store local) — o que torna o app público
+
+> Decisão registrada em sessão. O usuário quer o app no ar e com notoriedade,
+> **sem** guardar dado de terceiros (LGPD) e **sem** custo. A conexão bancária
+> é a única peça que não tem versão "sem custódia": o `CLIENT_SECRET` não pode
+> ir ao navegador, então o extrato passa pelo servidor e o item nasce dentro da
+> conta Pluggy do dono do app. Logo: **visitante usa o app inteiro, mas não
+> conecta banco.**
+
+1. **`lib/store/localStore.ts`** implementa o mesmo `FinanceStore`, gravando no
+   navegador do visitante. Base recuperável do commit `c437e42`
+   (`localStorageStore.ts`, 267 linhas) — mas ela era **síncrona** e não conhece
+   `Debt`, `BankConnection` nem os campos novos de `Recurring`. Ponto de
+   partida, não "colar e funcionar".
+2. **`lib/store/index.ts` escolhe a implementação**: sem sessão → `LocalStore`;
+   com sessão → `SupabaseStore`. Os componentes não sabem a diferença — é para
+   isso que o contrato existe.
+3. **Sem cadastro para o visitante.** Ele entra e usa; o app é *manual-first* e
+   a spec já garante que ele é completo sem nunca conectar banco.
+4. **O botão "Conectar banco" não aparece sem sessão.** Não é limitação
+   esquisita: "estado desconectado é o padrão e não pode parecer um erro".
+5. **Nada de analytics que identifique o visitante.** O argumento de LGPD aqui
+   não é "protejo bem o dado alheio", é **"nunca recebo o dado"**. Analytics
+   com identificação destruiria exatamente isso.
+
+**Done:** abrir o site sem logar dá um app funcional; fechar e reabrir mantém os
+dados; nenhuma requisição grava nada no Supabase nesse modo.
+
 ---
 
 ## Design
@@ -1020,16 +1100,18 @@ faz — mas **um formato só** no arquivo inteiro.
 ## Definition of done
 
 - `npm run dev` sobe sem erro de TypeScript.
-- Login mockado → Home funcional **sem nunca conectar banco**, com dados
-  lançados na mão.
+- Login real (Supabase Auth, Tarefa 13) → Home funcional **sem nunca conectar
+  banco**, com dados lançados na mão. Sem sessão, o modo visitante (Tarefa 18)
+  entrega a mesma Home com store local.
 - Home mostra: saldo, linha do mês, os 4 números, barra de sobra, gastos por
   categoria, abas Planos e Anotações.
 - Recorrentes: criar, editar, criar tipo novo, definir prioridade e link.
 - Adicionar entrada/saída funciona e reflete na Home na hora.
 - Histórico lista meses anteriores.
-- Config → "Conectar banco" abre o widget e conecta no sandbox
-  (`user-ok` / `password-ok`). Transações do banco entram, dedup pergunta antes
-  de mesclar.
+- Config → "Conectar banco" abre o widget e conecta. Durante o desenvolvimento,
+  no sandbox (`user-ok` / `password-ok`); em uso real, banco próprio via Meu
+  Pluggy. Transações do banco entram, dedup pergunta antes de mesclar.
+- As rotas de API respondem 401 sem sessão (Tarefa 16).
 - Nenhum componente toca `localStorage` direto — tudo via `lib/store/`.
 - Todo método do store recebe `userId`.
 - Nenhuma credencial no client; rotas de API com `runtime = 'nodejs'`.
@@ -1050,7 +1132,10 @@ faz — mas **um formato só** no arquivo inteiro.
 
 - Auth real e banco de dados real deixaram de ser adiados — ver Tarefa 13
   (migração para Supabase).
-- Plano comercial / Meu Pluggy — seguir no sandbox.
+- Plano comercial da Pluggy (conectar contas de **terceiros**) — ver Tarefa 18:
+  o app público não oferece conexão bancária. **Meu Pluggy deixou de ser fora de
+  escopo**: é o tier gratuito para conectar as **próprias** contas (até 5), e é
+  o que a Tarefa 17 usa.
 - Import de OFX.
 - Categorização automática dos lançamentos manuais.
 - Notificações / lembretes de vencimento dos recorrentes.
