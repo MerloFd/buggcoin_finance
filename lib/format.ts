@@ -20,6 +20,22 @@ export function formatDateTime(iso: string): string {
   });
 }
 
+// 'YYYY-MM-DD' -> "09/08". Parsed as a local date, never through `new Date(iso)`,
+// which reads a bare ISO date as UTC and can shift it a day backwards.
+export function formatDay(isoDate: string): string {
+  const [, month, day] = isoDate.split("-");
+  return `${day}/${month}`;
+}
+
+// 'YYYY-MM' -> "jul/2026". Compact form for inline use inside a row.
+export function formatMonthShort(month: string): string {
+  const [year, monthNumber] = month.split("-").map(Number);
+  const label = new Date(year, monthNumber - 1, 1)
+    .toLocaleDateString("pt-BR", { month: "short" })
+    .replace(".", "");
+  return `${label}/${year}`;
+}
+
 // 'YYYY-MM' -> "julho de 2026".
 export function formatMonth(month: string): string {
   const [y, m] = month.split("-").map(Number);

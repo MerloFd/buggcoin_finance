@@ -13,11 +13,13 @@ import {
 import { RecurringTypeSelect } from "@/components/RecurringTypeSelect";
 import { formatBRL, parseAmount } from "@/lib/format";
 import { useAuth } from "@/hooks/useAuth";
+import { dayOfMonthOf } from "@/lib/recurring";
+import { currentMonth } from "@/hooks/useFinance";
 import {
   store,
-  DEFAULT_RECURRING_TYPE_ID,
   type Direction,
   type Recurring,
+  type RecurringEnd,
   type RecurringType,
 } from "@/lib/store";
 
@@ -30,17 +32,29 @@ interface FormState {
   priority: Priority;
   url: string;
   active: boolean;
+  // Carried through untouched so editing here never silently resets fields
+  // this form doesn't expose yet (frequency and end land in Task 14).
+  startMonth: string; // 'YYYY-MM'; the full startDate is this + dayOfMonth
+  frequency: Recurring["frequency"];
+  end: RecurringEnd;
+  category: string | null;
+  creditor: string | null;
 }
 
-function emptyForm(): FormState {
+function emptyForm(defaultTypeId: string): FormState {
   return {
     description: "",
     amount: "",
     dayOfMonth: "1",
-    typeId: DEFAULT_RECURRING_TYPE_ID,
+    typeId: defaultTypeId,
     priority: 3,
     url: "",
     active: true,
+    startMonth: currentMonth(),
+    frequency: "monthly",
+    end: { kind: "never" },
+    category: null,
+    creditor: null,
   };
 }
 
@@ -52,13 +66,20 @@ export function Recorrentes() {
   const [types, setTypes] = useState<RecurringType[]>([]);
   const [form, setForm] = useState<FormState | null>(null);
 
-  function reload(uid: string) {
-    setRecurrings(store.getRecurrings(uid));
-    setTypes(store.getRecurringTypes(uid));
+  async function reload(uid: string) {
+    const [nextRecurrings, nextTypes] = await Promise.all([
+      store.getRecurrings(uid),
+      store.getRecurringTypes(uid),
+    ]);
+    setRecurrings(nextRecurrings);
+    setTypes(nextTypes);
   }
 
   useEffect(() => {
-    if (userId) reload(userId);
+    if (!userId) return;
+    reload(userId).catch((error: unknown) => {
+      console.error("Recorrentes: failed to load", error);
+    });
   }, [userId]);
 
   const typeMap = useMemo(
@@ -70,15 +91,28 @@ export function Recorrentes() {
   const typeLabel = (typeId: string): string =>
     typeMap.get(typeId)?.label ?? "—";
 
+  // The seeded 'gasto' type: its id is a uuid created by the database, so it
+  // has to be looked up, never hardcoded.
+  const defaultTypeId =
+    types.find((t) => t.isDefault)?.id ?? types[0]?.id ?? "";
+  const month = currentMonth();
+
+  // Creditors already in use, for the autocomplete — same pattern as category.
+  const creditorOptions = [
+    ...new Set(
+      recurrings.map((r) => r.creditor).filter((c): c is string => !!c),
+    ),
+  ];
+
   if (!userId) return null;
 
   const sorted = [...recurrings].sort((a, b) => {
     if (a.active !== b.active) return a.active ? -1 : 1;
-    return a.dayOfMonth - b.dayOfMonth;
+    return dayOfMonthOf(a, month) - dayOfMonthOf(b, month);
   });
 
   function openNew() {
-    setForm(emptyForm());
+    setForm(emptyForm(defaultTypeId));
   }
 
   function openEdit(r: Recurring) {
@@ -86,53 +120,67 @@ export function Recorrentes() {
       id: r.id,
       description: r.description,
       amount: String(r.amount).replace(".", ","),
-      dayOfMonth: String(r.dayOfMonth),
+      dayOfMonth: String(Number(r.startDate.slice(8, 10))),
       typeId: r.typeId,
       priority: r.priority,
       url: r.url ?? "",
       active: r.active,
+      startMonth: r.startDate.slice(0, 7),
+      frequency: r.frequency,
+      end: r.end,
+      category: r.category,
+      creditor: r.creditor,
     });
   }
 
-  function toggleActive(r: Recurring) {
-    store.saveRecurring(userId!, {
+  async function toggleActive(r: Recurring) {
+    await store.saveRecurring(userId!, {
       id: r.id,
       description: r.description,
       amount: r.amount,
-      dayOfMonth: r.dayOfMonth,
       typeId: r.typeId,
+      category: r.category,
+      creditor: r.creditor,
       url: r.url,
       priority: r.priority,
       active: !r.active,
+      frequency: r.frequency,
+      startDate: r.startDate,
+      end: r.end,
     });
-    reload(userId!);
+    await reload(userId!);
   }
 
-  function save() {
+  async function save() {
     if (!form) return;
     const amount = parseAmount(form.amount);
     const day = Number.parseInt(form.dayOfMonth, 10);
     if (!form.description.trim() || !(amount > 0) || !(day >= 1 && day <= 31)) {
       return; // invalid; keep the form open
     }
-    store.saveRecurring(userId!, {
+    await store.saveRecurring(userId!, {
       id: form.id,
       description: form.description.trim(),
       amount,
-      dayOfMonth: day,
       typeId: form.typeId,
+      category: form.category,
+      creditor: form.creditor,
       url: form.url.trim() || null,
       priority: form.priority,
       active: form.active,
+      frequency: form.frequency,
+      // The start month is preserved on edit; only the day is editable here.
+      startDate: `${form.startMonth}-${String(day).padStart(2, "0")}`,
+      end: form.end,
     });
-    reload(userId!);
+    await reload(userId!);
     setForm(null);
   }
 
-  function remove() {
+  async function remove() {
     if (!form?.id) return;
-    store.deleteRecurring(userId!, form.id);
-    reload(userId!);
+    await store.deleteRecurring(userId!, form.id);
+    await reload(userId!);
     setForm(null);
   }
 
@@ -198,6 +246,27 @@ export function Recorrentes() {
             />
           </Field>
 
+          <Field label="Credor (opcional)">
+            <Input
+              list="recorrentes-creditor-options"
+              value={form.creditor ?? ""}
+              onChange={(e) =>
+                setForm({ ...form, creditor: e.target.value || null })
+              }
+              placeholder="Magalu, Nubank..."
+            />
+            <datalist id="recorrentes-creditor-options">
+              {creditorOptions.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
+            {form.end.kind === "after" && (
+              <p className="text-xs text-muted-foreground">
+                Parcelado em {form.end.occurrences}× — aparece na seção Dívidas.
+              </p>
+            )}
+          </Field>
+
           <Field label="Link (opcional)">
             <Input
               inputMode="url"
@@ -248,7 +317,7 @@ export function Recorrentes() {
                     className="flex min-w-0 flex-1 items-center gap-3 text-left"
                   >
                     <span className="w-8 shrink-0 text-center font-mono text-sm tabular-nums">
-                      {r.dayOfMonth}
+                      {dayOfMonthOf(r, month)}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block truncate font-medium">

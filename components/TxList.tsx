@@ -2,7 +2,7 @@
 
 import { ArrowDownLeft, ArrowUpRight } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatBRL, formatDateTime } from "@/lib/format";
+import { formatBRL, formatDay } from "@/lib/format";
 import { getCategoryStyle } from "@/lib/categories";
 import type { Entry } from "@/lib/store";
 
@@ -55,8 +55,7 @@ export function TxList({
                   aria-hidden
                 />
                 <span className="truncate">
-                  {e.category ?? "Sem categoria"} ·{" "}
-                  {formatDateTime(e.createdAt ?? e.date)}
+                  {e.category ?? "Sem categoria"} · {formatDay(e.date)}
                 </span>
               </span>
             </span>

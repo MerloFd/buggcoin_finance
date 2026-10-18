@@ -16,12 +16,12 @@ export function netAmount(e: Entry): number {
 }
 
 // Entries inside an inclusive ISO date range, newest first.
-export function listEntries(
+export async function listEntries(
   userId: string,
   { start, end, limit }: { start: string; end: string; limit?: number },
-): Entry[] {
-  const list = store
-    .getEntries(userId)
+): Promise<Entry[]> {
+  const all = await store.getEntries(userId);
+  const list = all
     .filter(countsInTotals)
     .filter((e) => e.date >= start && e.date <= end)
     .sort((a, b) => (b.createdAt ?? b.date).localeCompare(a.createdAt ?? a.date));

@@ -2,7 +2,8 @@
 
 import { useTheme } from "next-themes";
 import { useEffect, useState } from "react";
-import { LogOut, Monitor, Moon, Settings, Sun } from "lucide-react";
+import { Landmark, LogOut, Monitor, Moon, Settings, Sun } from "lucide-react";
+import { ConnectBankSheet } from "@/components/ConnectBankSheet";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -13,14 +14,23 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useAuth } from "@/hooks/useAuth";
 
 export function SettingsPopover() {
-  const { logout } = useAuth();
+  const { user, logout } = useAuth();
   const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
+  const [bankOpen, setBankOpen] = useState(false);
 
   // next-themes: theme is unknown on the server, mount before reading it.
   useEffect(() => setMounted(true), []);
 
   return (
+    <>
+      {user && (
+        <ConnectBankSheet
+          userId={user.id}
+          open={bankOpen}
+          onOpenChange={setBankOpen}
+        />
+      )}
     <Popover>
       <PopoverTrigger
         aria-label="Configurações"
@@ -59,6 +69,15 @@ export function SettingsPopover() {
         <Button
           variant="outline"
           className="w-full justify-start"
+          onClick={() => setBankOpen(true)}
+        >
+          <Landmark className="size-4" aria-hidden />
+          Conectar banco
+        </Button>
+
+        <Button
+          variant="outline"
+          className="w-full justify-start"
           onClick={logout}
         >
           <LogOut className="size-4" aria-hidden />
@@ -66,5 +85,6 @@ export function SettingsPopover() {
         </Button>
       </PopoverContent>
     </Popover>
+    </>
   );
 }

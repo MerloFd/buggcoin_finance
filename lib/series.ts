@@ -3,6 +3,7 @@
 // outside useFinance (that hook is intentionally month-scoped).
 
 import { countsInTotals, netAmount } from "@/lib/entries";
+import { countsInMonth, dayOfMonthOf } from "@/lib/recurring";
 import { store, type Direction, type Recurring } from "@/lib/store";
 
 export type Period = "week" | "month" | "semester" | "year";
@@ -173,11 +174,11 @@ function planFor(
  * @param opts.month  anchor month ('YYYY-MM') — used by period 'month'
  * @param opts.withProjection  apply still-previsto recurrings to future buckets
  */
-export function buildSeries(
+export async function buildSeries(
   userId: string,
   period: Period,
   opts: { month?: string; withProjection?: boolean } = {},
-): SeriesBucket[] {
+): Promise<SeriesBucket[]> {
   const { month, withProjection = true } = opts;
   const { start, end, granularity } = planFor(period, month);
 
@@ -188,7 +189,7 @@ export function buildSeries(
         ? weekBuckets(start, end)
         : monthBuckets(start, end);
 
-  const entries = store.getEntries(userId).filter(countsInTotals);
+  const entries = (await store.getEntries(userId)).filter(countsInTotals);
 
   // Balance carried in from everything before the window (zero at first use).
   const carryIn = entries
@@ -199,7 +200,7 @@ export function buildSeries(
 
   // Forecast movement per day, from recurrings still 'previsto' this month.
   const forecast = withProjection
-    ? forecastByDay(userId, month ?? monthKey(new Date()), todayISO)
+    ? await forecastByDay(userId, month ?? monthKey(new Date()), todayISO)
     : new Map<string, number>();
 
   let running = carryIn;
@@ -229,23 +230,25 @@ export function buildSeries(
 
 // Net forecast per ISO day for recurrings that are still 'previsto' in `month`
 // and fall after today.
-function forecastByDay(
+async function forecastByDay(
   userId: string,
   month: string,
   todayISO: string,
-): Map<string, number> {
-  const types = store.getRecurringTypes(userId);
+): Promise<Map<string, number>> {
+  const [types, realizations, recurrings] = await Promise.all([
+    store.getRecurringTypes(userId),
+    store.getRealizations(userId, month),
+    store.getRecurrings(userId),
+  ]);
   const dirOf = new Map<string, Direction>(
     types.map((t) => [t.id, t.direction]),
   );
-  const realized = new Set(
-    store.getRealizations(userId, month).map((r) => r.recurringId),
-  );
+  const realized = new Set(realizations.map((r) => r.recurringId));
 
   const out = new Map<string, number>();
-  for (const r of store.getRecurrings(userId) as Recurring[]) {
-    if (!r.active || realized.has(r.id)) continue;
-    const day = String(clampDay(r.dayOfMonth, month)).padStart(2, "0");
+  for (const r of recurrings as Recurring[]) {
+    if (!countsInMonth(r, month) || realized.has(r.id)) continue;
+    const day = String(dayOfMonthOf(r, month)).padStart(2, "0");
     const dateISO = `${month}-${day}`;
     if (dateISO <= todayISO) continue;
     const value =

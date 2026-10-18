@@ -5,6 +5,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { Logo } from "@/components/Logo";
 import { Fab } from "@/components/Fab";
 import { PendingMatchesBanner } from "@/components/PendingMatchesBanner";
+import { LegacyImportBanner } from "@/components/LegacyImportBanner";
 
 export function AppShell({ children }: { children: ReactNode }) {
   return (
@@ -20,6 +21,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
+        <LegacyImportBanner />
         <PendingMatchesBanner />
 
         {/* pb clears the fixed BottomNav on mobile; roomy centered column on desktop */}

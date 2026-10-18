@@ -37,12 +37,13 @@ export function RecurringTypeSelect({
   const [label, setLabel] = useState("");
   const [direction, setDirection] = useState<Direction>("out");
 
-  function create() {
+  async function create() {
     const trimmed = label.trim();
     if (!trimmed) return;
-    const created = store.saveRecurringType(userId, {
+    const created = await store.saveRecurringType(userId, {
       label: trimmed,
       direction,
+      isDefault: false, // only the seeded 'gasto' type is the default
     });
     onTypesChange();
     onChange(created.id);

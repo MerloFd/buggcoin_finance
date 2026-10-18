@@ -6,6 +6,7 @@
 // Precedence: dedup runs BEFORE realization. An Entry only becomes a candidate
 // to realize a recurring once it's resolved as a non-duplicate.
 
+import { countsInMonth, dayOfMonthOf } from "@/lib/recurring";
 import {
   store,
   type Direction,
@@ -29,40 +30,31 @@ function monthOf(iso: string): string {
   return iso.slice(0, 7);
 }
 
-function daysInMonth(month: string): number {
-  const [y, m] = month.split("-").map(Number);
-  return new Date(y, m, 0).getDate();
-}
-
-function recurringDateISO(month: string, dayOfMonth: number): string {
-  const day = Math.min(dayOfMonth, daysInMonth(month));
-  return `${month}-${String(day).padStart(2, "0")}`;
+function recurringDateISO(recurring: Recurring, month: string): string {
+  return `${month}-${String(dayOfMonthOf(recurring, month)).padStart(2, "0")}`;
 }
 
 // Dedup pass: pair a new bank/manual entry with an unresolved opposite-source
 // counterpart. The MANUAL side becomes 'pending' (netted); the bank copy stays.
-function detectDedup(userId: string, entry: Entry): boolean {
+async function detectDedup(userId: string, entry: Entry): Promise<boolean> {
   if (entry.dedupStatus !== null) return false;
 
-  const others = store
-    .getEntries(userId)
-    .filter(
-      (o) =>
-        o.id !== entry.id &&
-        o.dedupStatus === null &&
-        o.source !== entry.source && // dedup is bank x manual only
-        o.direction === entry.direction &&
-        amountsClose(o.amount, entry.amount) &&
-        daysApart(o.date, entry.date) <= 3,
-    );
-
-  const partner = others[0];
+  const all = await store.getEntries(userId);
+  const partner = all.find(
+    (o) =>
+      o.id !== entry.id &&
+      o.dedupStatus === null &&
+      o.source !== entry.source && // dedup is bank x manual only
+      o.direction === entry.direction &&
+      amountsClose(o.amount, entry.amount) &&
+      daysApart(o.date, entry.date) <= 3,
+  );
   if (!partner) return false;
 
   // Net the manual one out; keep the bank one.
   const manual = entry.source === "manual" ? entry : partner;
   const bank = entry.source === "manual" ? partner : entry;
-  store.updateEntry(userId, manual.id, {
+  await store.updateEntry(userId, manual.id, {
     dedupStatus: "pending",
     dedupPartnerId: bank.id,
   });
@@ -71,31 +63,32 @@ function detectDedup(userId: string, entry: Entry): boolean {
 }
 
 // Realization pass: pair the entry with a still-previsto recurring in its month.
-function detectRealization(userId: string, entry: Entry): void {
+async function detectRealization(userId: string, entry: Entry): Promise<void> {
   // Only a resolved-as-non-duplicate entry can realize a recurring.
   if (entry.dedupStatus === "pending" || entry.dedupStatus === "merged") return;
 
   const month = monthOf(entry.date);
-  const types = store.getRecurringTypes(userId);
+  const [types, existing, recurrings] = await Promise.all([
+    store.getRecurringTypes(userId),
+    store.getRealizations(userId, month),
+    store.getRecurrings(userId),
+  ]);
   const dirOf = new Map<string, Direction>(
     types.map((t: RecurringType) => [t.id, t.direction]),
   );
-  const existing = store.getRealizations(userId, month);
 
-  const candidate = store
-    .getRecurrings(userId)
-    .filter(
-      (r: Recurring) =>
-        r.active &&
-        (dirOf.get(r.typeId) ?? "out") === entry.direction &&
-        !existing.some((x) => x.recurringId === r.id) && // not already matched this month
-        amountsClose(r.amount, entry.amount) &&
-        daysApart(recurringDateISO(month, r.dayOfMonth), entry.date) <= 3,
-    )[0];
+  const candidate = recurrings.filter(
+    (r: Recurring) =>
+      countsInMonth(r, month) &&
+      (dirOf.get(r.typeId) ?? "out") === entry.direction &&
+      !existing.some((x) => x.recurringId === r.id) && // not already matched this month
+      amountsClose(r.amount, entry.amount) &&
+      daysApart(recurringDateISO(r, month), entry.date) <= 3,
+  )[0];
 
   if (!candidate) return;
 
-  store.saveRealization(userId, {
+  await store.saveRealization(userId, {
     recurringId: candidate.id,
     month,
     status: "pending",
@@ -104,11 +97,16 @@ function detectRealization(userId: string, entry: Entry): void {
 }
 
 // Run detection for a freshly created/imported entry.
-export function runMatching(userId: string, entryId: string): void {
-  const entry = store.getEntries(userId).find((e) => e.id === entryId);
+export async function runMatching(
+  userId: string,
+  entryId: string,
+): Promise<void> {
+  const entries = await store.getEntries(userId);
+  const entry = entries.find((e) => e.id === entryId);
   if (!entry) return;
-  detectDedup(userId, entry);
+  await detectDedup(userId, entry);
   // Re-read: dedup may have flipped this entry to 'pending'.
-  const fresh = store.getEntries(userId).find((e) => e.id === entryId);
-  if (fresh) detectRealization(userId, fresh);
+  const refreshed = await store.getEntries(userId);
+  const fresh = refreshed.find((e) => e.id === entryId);
+  if (fresh) await detectRealization(userId, fresh);
 }

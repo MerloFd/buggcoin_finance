@@ -9,16 +9,12 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { PrioritySelect, type Priority } from "@/components/PrioritySelect";
 import { RecurringTypeSelect } from "@/components/RecurringTypeSelect";
 import { cn } from "@/lib/utils";
-import { parseAmount } from "@/lib/format";
+import { formatBRL, parseAmount } from "@/lib/format";
 import { runMatching } from "@/lib/matching";
 import { KNOWN_CATEGORIES } from "@/lib/categories";
 import { useAuth } from "@/hooks/useAuth";
-import {
-  store,
-  DEFAULT_RECURRING_TYPE_ID,
-  type Direction,
-  type RecurringType,
-} from "@/lib/store";
+import { currentMonth } from "@/hooks/useFinance";
+import { store, type Direction, type RecurringType } from "@/lib/store";
 
 function todayISO(): string {
   const d = new Date();
@@ -41,32 +37,78 @@ export function AddEntry() {
 
   // Recurring path (checkbox "Repetir todo mês").
   const [repeat, setRepeat] = useState(false);
-  const [typeId, setTypeId] = useState(DEFAULT_RECURRING_TYPE_ID);
+  // Empty until the types load: the default type's id is a uuid created by the
+  // database, so it can't be known upfront.
+  const [typeId, setTypeId] = useState("");
   const [dayOfMonth, setDayOfMonth] = useState("1");
   const [priority, setPriority] = useState<Priority>(3);
   const [url, setUrl] = useState("");
+  // Installment path: "12x de R$ 350" is a recurring that ends after N times.
+  const [duration, setDuration] = useState<"forever" | "installments">(
+    "forever",
+  );
+  const [occurrences, setOccurrences] = useState("12");
+  const [creditor, setCreditor] = useState("");
 
   const [types, setTypes] = useState<RecurringType[]>([]);
   const [usedCategories, setUsedCategories] = useState<string[]>([]);
+  const [usedCreditors, setUsedCreditors] = useState<string[]>([]);
 
-  function reloadTypes() {
-    if (userId) setTypes(store.getRecurringTypes(userId));
+  async function reloadTypes() {
+    if (!userId) return;
+    setTypes(await store.getRecurringTypes(userId));
   }
 
   useEffect(() => {
     if (!userId) return;
-    setTypes(store.getRecurringTypes(userId));
-    const used = store
-      .getEntries(userId)
-      .map((e) => e.category)
-      .filter((c): c is string => !!c);
-    setUsedCategories([...new Set(used)]);
+    let cancelled = false;
+    (async () => {
+      const [nextTypes, entries, recurrings] = await Promise.all([
+        store.getRecurringTypes(userId),
+        store.getEntries(userId),
+        store.getRecurrings(userId),
+      ]);
+      if (cancelled) return;
+      setTypes(nextTypes);
+      setUsedCreditors([
+        ...new Set(
+          recurrings
+            .map((r) => r.creditor)
+            .filter((c): c is string => !!c),
+        ),
+      ]);
+      setTypeId(
+        (current) =>
+          current ||
+          nextTypes.find((t) => t.isDefault)?.id ||
+          nextTypes[0]?.id ||
+          "",
+      );
+      const used = entries
+        .map((e) => e.category)
+        .filter((c): c is string => !!c);
+      setUsedCategories([...new Set(used)]);
+    })().catch((error: unknown) => {
+      console.error("AddEntry: failed to load", error);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [userId]);
 
   const categoryOptions = useMemo(
     () => [...new Set([...KNOWN_CATEGORIES, ...usedCategories])],
     [usedCategories],
   );
+  const creditorOptions = usedCreditors;
+
+  // "12x de R$ 350 = R$ 4.200" — shown for confirmation while typing.
+  const installmentTotal = useMemo(() => {
+    const value = parseAmount(amount);
+    const times = Number.parseInt(occurrences, 10);
+    if (!(value > 0) || !(times > 0)) return null;
+    return value * times;
+  }, [amount, occurrences]);
 
   if (!userId) return null;
 
@@ -74,26 +116,37 @@ export function AddEntry() {
     router.push("/");
   }
 
-  function save() {
+  async function save() {
     const value = parseAmount(amount);
     if (!description.trim() || !(value > 0)) return;
 
     if (repeat) {
       // The checkbox transforms the form into Recurring creation. Direction
-      // comes from the type; category is not part of a Recurring.
+      // comes from the type.
       const day = Number.parseInt(dayOfMonth, 10);
-      if (!(day >= 1 && day <= 31)) return;
-      store.saveRecurring(userId!, {
+      if (!(day >= 1 && day <= 31) || !typeId) return;
+
+      const times = Number.parseInt(occurrences, 10);
+      const isInstallment = duration === "installments";
+      if (isInstallment && !(times > 0)) return;
+
+      await store.saveRecurring(userId!, {
         description: description.trim(),
         amount: value,
-        dayOfMonth: day,
         typeId,
+        category: category.trim() || null,
+        creditor: isInstallment ? creditor.trim() || null : null,
         url: url.trim() || null,
         priority,
         active: true,
+        frequency: "monthly",
+        startDate: `${currentMonth()}-${String(day).padStart(2, "0")}`,
+        end: isInstallment
+          ? { kind: "after", occurrences: times }
+          : { kind: "never" },
       });
     } else {
-      const entry = store.createEntry(userId!, {
+      const entry = await store.createEntry(userId!, {
         description: description.trim(),
         amount: value,
         date,
@@ -103,7 +156,7 @@ export function AddEntry() {
         dedupStatus: null,
       });
       // Detection fires on every new Entry (spec: Regra de matching).
-      runMatching(userId!, entry.id);
+      await runMatching(userId!, entry.id);
     }
     router.push("/");
   }
@@ -213,6 +266,59 @@ export function AddEntry() {
             />
           </Field>
 
+          <Field label="Por quanto tempo">
+            <div className="flex gap-2">
+              <DurationButton
+                active={duration === "forever"}
+                onClick={() => setDuration("forever")}
+              >
+                Sempre
+              </DurationButton>
+              <DurationButton
+                active={duration === "installments"}
+                onClick={() => setDuration("installments")}
+              >
+                Parcelado
+              </DurationButton>
+            </div>
+          </Field>
+
+          {duration === "installments" && (
+            <>
+              <Field label="Quantas parcelas">
+                <Input
+                  inputMode="numeric"
+                  value={occurrences}
+                  onChange={(e) => setOccurrences(e.target.value)}
+                  placeholder="12"
+                />
+                {installmentTotal !== null && (
+                  <p className="text-xs text-muted-foreground">
+                    {occurrences}× de {formatBRL(parseAmount(amount))} ={" "}
+                    <span className="font-mono tabular-nums">
+                      {formatBRL(installmentTotal)}
+                    </span>{" "}
+                    no total
+                  </p>
+                )}
+              </Field>
+
+              <Field label="Credor">
+                <Input
+                  list="creditor-options"
+                  value={creditor}
+                  onChange={(e) => setCreditor(e.target.value)}
+                  placeholder="Magalu, Nubank..."
+                />
+                <datalist id="creditor-options">
+                  {creditorOptions.map((c) => (
+                    <option key={c} value={c} />
+                  ))}
+                </datalist>
+              </Field>
+            </>
+          )}
+
           <Field label="Prioridade">
             <PrioritySelect value={priority} onChange={setPriority} />
           </Field>
@@ -232,6 +338,32 @@ export function AddEntry() {
         Salvar
       </Button>
     </div>
+  );
+}
+
+function DurationButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "min-h-11 flex-1 rounded-md border px-3 text-sm transition-colors",
+        active
+          ? "border-primary bg-primary text-primary-foreground"
+          : "border-border text-muted-foreground",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

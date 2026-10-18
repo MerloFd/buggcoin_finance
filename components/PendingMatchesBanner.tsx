@@ -34,10 +34,13 @@ export function PendingMatchesBanner() {
   const [dedup, setDedup] = useState<DedupItem[]>([]);
   const [realizations, setRealizations] = useState<RealizationItem[]>([]);
 
-  const load = useCallback(() => {
+  const load = useCallback(async () => {
     if (!userId) return;
-    const entries = store.getEntries(userId);
-    const recurrings = store.getRecurrings(userId);
+    const [entries, recurrings, allRealizations] = await Promise.all([
+      store.getEntries(userId),
+      store.getRecurrings(userId),
+      store.getRealizations(userId),
+    ]);
 
     setDedup(
       entries
@@ -46,8 +49,7 @@ export function PendingMatchesBanner() {
     );
 
     setRealizations(
-      store
-        .getRealizations(userId)
+      allRealizations
         .filter((r) => r.status === "pending")
         .flatMap((realization) => {
           const recurring = recurrings.find(
@@ -62,41 +64,43 @@ export function PendingMatchesBanner() {
 
   // Reload on mount and whenever the route changes (e.g. back from Adicionar).
   useEffect(() => {
-    load();
+    load().catch((error: unknown) => {
+      console.error("PendingMatchesBanner: failed to load", error);
+    });
   }, [load, pathname]);
 
   if (!userId) return null;
   if (dedup.length === 0 && realizations.length === 0) return null;
 
   // --- Dedup actions ---
-  function confirmDedup(entry: Entry) {
-    store.updateEntry(userId!, entry.id, { dedupStatus: "merged" });
-    load();
+  async function confirmDedup(entry: Entry) {
+    await store.updateEntry(userId!, entry.id, { dedupStatus: "merged" });
+    await load();
   }
-  function rejectDedup(entry: Entry) {
-    store.updateEntry(userId!, entry.id, { dedupStatus: "rejected" });
+  async function rejectDedup(entry: Entry) {
+    await store.updateEntry(userId!, entry.id, { dedupStatus: "rejected" });
     // A rejected entry may now realize a recurring — retry detection.
-    runMatching(userId!, entry.id);
-    load();
+    await runMatching(userId!, entry.id);
+    await load();
   }
 
   // --- Realization actions ---
-  function confirmRealization(item: RealizationItem) {
-    store.saveRealization(userId!, {
+  async function confirmRealization(item: RealizationItem) {
+    await store.saveRealization(userId!, {
       id: item.realization.id,
       recurringId: item.recurring.id,
       month: item.realization.month,
       status: "confirmed",
       entryId: item.entry.id,
     });
-    store.updateEntry(userId!, item.entry.id, {
+    await store.updateEntry(userId!, item.entry.id, {
       realizesRecurringId: item.recurring.id,
     });
-    load();
+    await load();
   }
-  function rejectRealization(item: RealizationItem) {
-    store.deleteRealization(userId!, item.realization.id);
-    load();
+  async function rejectRealization(item: RealizationItem) {
+    await store.deleteRealization(userId!, item.realization.id);
+    await load();
   }
 
   return (
